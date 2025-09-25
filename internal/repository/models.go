@@ -4,7 +4,8 @@ import (
 	"assignment/openapi"
 	"fmt"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"strconv"
 	"time"
 )
 
@@ -87,6 +88,15 @@ func GetMovies(params openapi.GetMoviesParams) ([]Movie, string, error) {
 	return movies, nextCursor, nil
 }
 
+func GetMovieByTitle(title string) (*Movie, error) {
+	var movie Movie
+	err := DB.Where("title = ?", title).First(&movie).Error
+	if err != nil {
+		return nil, err
+	}
+	return &movie, nil
+}
+
 type BoxOffice struct {
 	Revenue     Revenue   `json:"revenue"`
 	Currency    string    `json:"currency"`
@@ -99,12 +109,31 @@ type Revenue struct {
 }
 
 type Rating struct {
-	gorm.Model
-	MovieTitle string  `gorm:"size:255;not null"`
-	RaterId    string  `gorm:"size:255;not null"`
-	Rating     float32 `gorm:"type:decimal(3,1);not null"`
+	MovieTitle string  `gorm:"size:255;not null" json:"movieTitle"`
+	RaterId    string  `gorm:"primarykey;size:255;not null" json:"raterId"`
+	Rating     float32 `gorm:"type:decimal(3,1);not null" json:"rating"`
 }
 
 func (Rating) TableName() string {
 	return "ratings"
+}
+
+func UpsertRating(r *Rating) (int64, error) {
+	tx := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "movie_title"}, {Name: "rater_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"rating"}),
+	}).Create(r)
+	return tx.RowsAffected, tx.Error
+}
+
+type RatingStats struct {
+	Average float64 `gorm:"average" json:"average"`
+	Count   int64   `gorm:"count" json:"count"`
+}
+
+func GetAverageRating(title string) (RatingStats, error) {
+	var stat RatingStats
+	err := DB.Model(&Rating{}).Where("movie_title = ?", title).Select("AVG(rating) average, COUNT(rating) count").Scan(&stat).Error
+	stat.Average, _ = strconv.ParseFloat(fmt.Sprintf("%.1f", stat.Average), 64)
+	return stat, err
 }
