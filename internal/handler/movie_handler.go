@@ -5,9 +5,11 @@ import (
 	"assignment/internal/client"
 	"assignment/internal/repository"
 	"assignment/openapi"
+	"context"
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"golang.org/x/sync/errgroup"
 )
 
 type MovieHandler struct {
@@ -34,7 +36,10 @@ func (h *MovieHandler) GetMovies(c *gin.Context, params openapi.GetMoviesParams)
 		data.NextCursor = &nextCursor
 	}
 
+	g, _ := errgroup.WithContext(context.Background())
+
 	for i := range movies {
+		i := i
 		data.Items[i] = openapi.Movie{
 			Title:       movies[i].Title,
 			Genre:       movies[i].Genre,
@@ -44,15 +49,21 @@ func (h *MovieHandler) GetMovies(c *gin.Context, params openapi.GetMoviesParams)
 			MpaRating:   movies[i].MpaRating,
 			Id:          movies[i].ID,
 		}
-		response, err := h.cli.GetMovieBoxOfficeWithResponse(c, &openapi.GetMovieBoxOfficeParams{Title: "线些西周"})
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		if err = json.Unmarshal(response.Body, &data.Items[i].BoxOffice); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
+		g.Go(func() error {
+			response, err := h.cli.GetMovieBoxOfficeWithResponse(c, &openapi.GetMovieBoxOfficeParams{Title: "线些西周"})
+			if err != nil {
+				return err
+			}
+			if err = json.Unmarshal(response.Body, &data.Items[i].BoxOffice); err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+
+	if err = g.Wait(); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(200, data)
